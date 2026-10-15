@@ -3,6 +3,7 @@
   var STEP_MS = 800;
   var HAPPY_DEFAULT = ["idle", "dummy-loading", "dummy-success"];
   var playTimer = null;
+  var currentScreen = null;
 
   function list(selector) {
     return Array.prototype.slice.call(document.querySelectorAll(selector));
@@ -14,6 +15,11 @@
 
   function screens() {
     return list("[data-d3-screen]");
+  }
+
+  function screenOf(el) {
+    var screen = el.closest("[data-d3-screen]");
+    return screen ? screen.getAttribute("data-d3-screen") : null;
   }
 
   function uniqueStates() {
@@ -45,18 +51,21 @@
     var path = [];
     containers().forEach(function (el) {
       var id = el.getAttribute("data-d3-state");
+      var screen = screenOf(el);
+      var key = (screen || "") + "|" + id;
       var marked = el.hasAttribute("data-d3-happy");
       var included = marked || HAPPY_DEFAULT.indexOf(id) !== -1;
       if (id === "dummy-failure" && !marked) included = false;
-      if (included && id && !seen[id]) {
-        seen[id] = true;
-        path.push(id);
+      if (included && id && !seen[key]) {
+        seen[key] = true;
+        path.push({ state: id, screen: screen });
       }
     });
     return path;
   }
 
   function showScreen(name) {
+    currentScreen = name;
     screens().forEach(function (el) {
       if (el.getAttribute("data-d3-screen") === name) el.removeAttribute("hidden");
       else el.setAttribute("hidden", "");
@@ -68,17 +77,27 @@
     });
   }
 
-  function show(state) {
-    var active = null;
-    containers().forEach(function (el) {
-      if (!active && el.getAttribute("data-d3-state") === state) active = el;
+  function findContainer(state, screen) {
+    var matches = containers().filter(function (el) {
+      return el.getAttribute("data-d3-state") === state;
     });
-    if (active) {
-      var screen = active.closest("[data-d3-screen]");
-      if (screen) showScreen(screen.getAttribute("data-d3-screen"));
+    var preferred = [screen, currentScreen];
+    for (var i = 0; i < preferred.length; i += 1) {
+      if (!preferred[i]) continue;
+      for (var j = 0; j < matches.length; j += 1) {
+        if (screenOf(matches[j]) === preferred[i]) return matches[j];
+      }
     }
+    return matches[0] || null;
+  }
+
+  function show(state, screen) {
+    var active = findContainer(state, screen);
+    var activeScreen = active ? screenOf(active) : null;
+    if (activeScreen) showScreen(activeScreen);
     containers().forEach(function (el) {
-      if (el.getAttribute("data-d3-state") === state) el.removeAttribute("hidden");
+      var on = el.getAttribute("data-d3-state") === state && screenOf(el) === activeScreen;
+      if (on) el.removeAttribute("hidden");
       else el.setAttribute("hidden", "");
     });
     var inspector = document.querySelector("[data-d3-inspector]");
@@ -96,9 +115,13 @@
     try {
       var url = new URL(location.href);
       url.searchParams.set("d3_state", state);
+      if (activeScreen) url.searchParams.set("d3_screen", activeScreen);
+      else url.searchParams.delete("d3_screen");
       history.replaceState(null, "", url);
     } catch (err) {}
-    document.dispatchEvent(new CustomEvent("d3:state", { detail: { state: state } }));
+    document.dispatchEvent(new CustomEvent("d3:state", {
+      detail: { state: state, screen: activeScreen }
+    }));
   }
 
   function play() {
@@ -107,7 +130,7 @@
     var index = 0;
     function step() {
       if (index >= path.length) return;
-      show(path[index]);
+      show(path[index].state, path[index].screen);
       index += 1;
       if (index < path.length) playTimer = setTimeout(step, STEP_MS);
     }
@@ -140,9 +163,9 @@
       tab.setAttribute("data-d3-screen-tab", name);
       tab.addEventListener("click", function () {
         var first = containers().filter(function (container) {
-          return container.closest("[data-d3-screen]") === el;
+          return screenOf(container) === name;
         })[0];
-        if (first) show(first.getAttribute("data-d3-state"));
+        if (first) show(first.getAttribute("data-d3-state"), name);
         else showScreen(name);
       });
       bar.appendChild(tab);
@@ -170,11 +193,13 @@
     document.body.style.paddingBottom = "72px";
 
     var states = uniqueStates();
-    var requested = new URLSearchParams(location.search).get("d3_state");
+    var params = new URLSearchParams(location.search);
+    var requested = params.get("d3_state");
+    var requestedScreen = params.get("d3_screen");
     var initial = requested && states.indexOf(requested) !== -1
       ? requested
       : (states.indexOf("idle") !== -1 ? "idle" : states[0]);
-    if (initial) show(initial);
+    if (initial) show(initial, requestedScreen);
     else inspector.textContent = "No states found";
   }
 

@@ -18,24 +18,25 @@ A slice is one user-facing outcome. Steps 1–4 build an in-memory mockup of tha
 
 ## Files
 
-- Write the mockup to `mockups/<slice-slug>.html`. Use one file. When the slice has several screens, wrap each screen in `<section data-d3-screen="kebab-name">` inside that file. The copied script adds one tab per screen; do not add a second tab strip.
+- Write the mockup to `mockups/<slice-slug>.html`. Use one file. When the slice has several screens, wrap each screen in `<section data-d3-screen="kebab-name">` inside that file. The copied script adds one tab per screen; do not add a second tab strip. State ids may repeat across screens (each screen can have its own `idle`); do not repeat a state id within one screen.
 - Copy [state-bar.js](state-bar.js) to `mockups/state-bar.js` unchanged and load it with `<script src="state-bar.js"></script>` at the end of `<body>`. Do not rewrite the bar, and do not add a second state switcher.
 - Use a sandboxed app route only when the user asks to review the mockup inside the existing app.
+- The mockup is a reference spec, not code that grows into production. Keep `mockups/` until the PR merges so `/pr` can reuse it. Neither the mockup nor the state bar ships.
 
 ## Steps
 
 ### 1. Load Domain Language, Map Tickets, and Enumerate States
 
-Read `GLOSSARY.md` if present so every button label, loading message, error banner, and success toast uses the project's ubiquitous language. If it is absent, use the nouns already written in the ticket. Check `docs/agents/issue-tracker.md` (or local ticket files) to pull the originating spec and ticket IDs. If neither exists, ask for the ticket IDs before writing HTML. Do not invent IDs.
+Read `GLOSSARY.md` if present so every button label, loading message, error banner, and success toast uses the project's ubiquitous language. If it is absent, use the nouns already written in the ticket. Check `docs/agents/issue-tracker.md` (or local ticket files) to pull the originating spec and ticket IDs. When the source has no ticket IDs, use an existing reference instead: the PR number (`PR-482`) for a pull request, or the spec heading anchor (`spec#retry-policy`) for a spec. If none of these exist, ask before writing HTML. Do not invent IDs.
 
 Before writing any HTML, output a concise summary containing:
 
-1. **User Journey:** A single sentence stating what triggers the action, what the loading state shows, and what persisted outcome proves the slice works.
-2. **Discovered State List:** Must include **at least** the four baseline states (**Idle**, **Dummy Loading**, **Dummy Failure**, **Dummy Success**), plus any additional states required by the flow—such as **Empty**, **Partial / Degraded**, or **Permission-Denied**—with each state mapped to its ticket or spec ID (e.g., `T-12`, `T-13`) and a one-line summary copied from that ticket.
+1. **User Journey:** A single sentence stating what triggers the action, what the loading state shows, and what durable outcome proves the slice works: the persisted record for a write, or, for a read-only slice (search, filter, report), the result reproduced from real data by reloading the same URL.
+2. **Discovered State List:** Must include **at least** the four baseline states (**Idle**, **Dummy Loading**, **Dummy Failure**, **Dummy Success**), plus any additional states required by the flow—such as **Empty**, **Partial / Degraded**, or **Permission-Denied**—with each state mapped to its ticket, PR, or spec ID (e.g., `T-12`, `PR-482`) and a one-line summary copied from that source.
 
 State ids are kebab-case: `idle`, `dummy-loading`, `dummy-failure`, `dummy-success`. Write happy-path containers in that journey order.
 
-**Done when:** every discovered state carries a real ticket or spec ID and a one-line summary, and the four baseline states are present.
+**Done when:** every discovered state carries a real ticket, PR, or spec ID and a one-line summary, and the four baseline states are present.
 
 ### 2. Build the Mockup with Linked Dummy States
 
@@ -44,15 +45,15 @@ Generate one self-contained HTML file that runs with zero backend setup. Dummy s
 The copied state bar:
 
 1. Renders one button per distinct `data-d3-state` id, plus **Play Happy Path**. When the mockup has screens, it also renders one tab per `data-d3-screen`.
-2. Syncs the visible state to `?d3_state=<id>` on load and on click.
-3. Plays the happy path at 800ms per step, in document order: `idle`, then `dummy-loading`, then `dummy-success`, plus any other container marked `data-d3-happy`. It skips `dummy-failure` unless that container is explicitly marked `data-d3-happy`.
+2. Syncs the visible state to `?d3_state=<id>` (plus `&d3_screen=<name>` when the mockup has screens) on load and on click. A state button prefers the current screen's container and switches screens only when the current screen lacks that state.
+3. Plays the happy path at 800ms per step, in document order: `idle`, then `dummy-loading`, then `dummy-success`, plus any other container marked `data-d3-happy`. With screens, it walks each screen's happy path in turn. It skips `dummy-failure` unless that container is explicitly marked `data-d3-happy`.
 4. Fills the ticket inspector from the active container's `data-d3-ticket` and `data-d3-summary`.
 
-**Done when:** every state from Step 1 is reachable from the bar and from its `?d3_state=` URL, Play Happy Path walks the happy path in order and does not stop on Dummy Failure, and the inspector shows that state's ticket IDs and summary.
+**Done when:** every state from Step 1 is reachable from the bar and from its `?d3_state=` URL (with `d3_screen` when screens exist), every screen tab opens its own screen, Play Happy Path walks the happy path in order and does not stop on Dummy Failure, and the inspector shows that state's ticket IDs and summary.
 
 ### 3. Tag the Implementation Contract
 
-Put state metadata on the container. Put the contract on the node `/implement` must replace. A node does not carry all three attributes.
+State metadata goes on the state container. The contract goes on the inner trigger or status node that `/implement` must replace. Never put `data-d3-contract` on a state container.
 
 On each state container:
 
@@ -100,22 +101,27 @@ If the developer spots a flaw, correct the HTML mockup first. Changing a mockup 
 
 ### 5. Drive Implementation to Real Success
 
-Transition into `/implement` (using `/tdd` at each seam) and replace every `data-d3-contract` mock with real production code, one vertical seam at a time:
+Transition into `/implement` (using `/tdd` at each seam) and build the slice in the app's own stack and components, one vertical seam at a time. Do not copy mockup HTML into production; match its states, copy, and ticket mapping.
 
-1. Replace in-memory state transitions with the real domain module or API call.
-2. Wire the dummy loading state to actual network or compute progress.
-3. Wire the dummy success state to verified persistence or real response data, removing the dummy timer and `data-d3-contract` scaffolding as each seam goes green.
+1. Implement each `data-d3-contract` as a real production symbol with the same name in the codebase's casing: the mutation, query handler, or persisted domain event (`submit-invoice-batch` becomes `submitInvoiceBatch`).
+2. Drive the loading state from actual network or compute progress.
+3. Drive the success state from verified persistence or real response data.
+4. Grep the production code for every contract name in the mockup. Each one must resolve to a real symbol.
 
-Prove it in the running app, not in the mockup. Remove the D3 State Bar from the production UI, perform the user-journey trigger through the real controls, confirm the real success copy, then reload the page. The success outcome must still be visible without repeating the trigger.
+Prove it in the running app, not in the mockup. Perform the user-journey trigger through the real controls, confirm the real success copy, then reload the page without repeating the trigger:
+
+- **Write slices:** the persisted outcome (the saved record, updated list, or new status) is still visible. A transient toast that disappears on reload is expected; it does not count as the outcome.
+- **Read-only slices:** reloading the same URL reproduces the same result from real data, so the query state must live in the URL or in persisted preferences.
 
 Then run `/code-review` and reuse the states captured during `/d3` as the visual summary for `/pr`.
 
-**Done when:** driving the live application UI from a real trigger reaches the real success message **and it still shows after a full page reload**. A success state propped up by a dummy timer or a no-op route is not done.
+**Done when:** driving the live application UI from a real trigger reaches the real success message, every contract name maps to a production symbol, **and the durable outcome still shows after a full page reload**. A success state propped up by a dummy timer or a no-op route is not done.
 
 ## Gotchas
 
 - **Cheating the success state:** Never satisfy the criteria by swapping a frontend `setTimeout` for a no-op route returning `{ ok: true }`. Real success means the underlying domain state actually changed and persisted.
 - **Proving success in the mockup:** The mockup's in-memory success does not satisfy the reload check. Only the live app after step 5 does.
+- **Growing the mockup into production:** The mockup HTML is a spec. Rebuild the slice in the app's components and keep the mockup as the visual reference for `/pr`.
 - **Skipping the human gate:** Jumping straight from the mockup into full-stack implementation defeats the point of `/d3`. Pause for visual sign-off so the developer digests the scope first.
 - **Forking the state bar:** A second switcher, or an edited copy of `state-bar.js`, drifts from the ticket inspector and the URL contract. Copy the skill script unchanged.
 - **Inventing terminology in dummy copy:** Copy like "Operation completed successfully" hides domain bugs. Use the exact `GLOSSARY.md` terms so model mismatches surface on screen.
